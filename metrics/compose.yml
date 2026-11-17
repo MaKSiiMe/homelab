@@ -1,0 +1,440 @@
+name: metrics
+
+# Monitoring, phase 2 : Prometheus + Alertmanager + Grafana + exporters.
+#
+# Portainer CE ne sait pas monter un fichier du dépôt (chemins relatifs = Business
+# Edition) : les fichiers de config sont donc écrits en ligne (`configs: content`)
+# et copiés dans les conteneurs à leur création.
+#
+# ⚠️ Deux règles à respecter en modifiant ce fichier :
+#  1. Dans les blocs `content`, Compose interpole les variables : écrire `$$`
+#     pour obtenir un `$` (ex. `{{ $$labels.instance }}`, `{{ $$value }}`).
+#  2. Compose ne recrée pas un conteneur quand seul le contenu d'une config
+#     change. Après toute modification sous `configs:`, incrémenter
+#     `homelab.config-rev` ci-dessous, sinon l'ancienne config reste en place.
+
+x-config-rev: &config-rev
+  homelab.config-rev: "1"
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=90d
+      - --storage.tsdb.retention.size=5GB      # garde-fou disque (sda2)
+      - --web.external-url=http://100.124.153.20:9090
+    labels: *config-rev
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+      - source: prometheus_rules
+        target: /etc/prometheus/rules.yml
+    volumes:
+      - prometheus_data:/prometheus
+    ports:
+      - "100.124.153.20:9090:9090"
+    networks: [metrics]
+    mem_limit: 512m
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.2
+    container_name: alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.external-url=http://100.124.153.20:9093
+      - --cluster.listen-address=              # pas de cluster : ferme le port 9094
+    labels: *config-rev
+    configs:
+      - source: alertmanager_config
+        target: /etc/alertmanager/alertmanager.yml
+    secrets:
+      - discord_webhook_url
+      - healthchecks_watchdog_url
+    volumes:
+      - alertmanager_data:/alertmanager       # silences et état des notifications
+    ports:
+      - "100.124.153.20:9093:9093"
+    networks: [metrics]
+    mem_limit: 64m
+
+  grafana:
+    image: grafana/grafana:13.3.1
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password   # lu au 1er démarrage seulement
+      GF_SERVER_ROOT_URL: http://100.124.153.20:3000
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"   # pas de plugins téléchargés au démarrage
+    labels: *config-rev
+    configs:
+      - source: grafana_datasources
+        target: /etc/grafana/provisioning/datasources/prometheus.yml
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "100.124.153.20:3000:3000"
+    networks: [metrics]
+    depends_on: [prometheus]
+    mem_limit: 256m
+
+  # Métriques de l'hôte. Réseau de l'hôte (sinon on ne voit que le trafic du
+  # conteneur), mais écoute uniquement sur la passerelle du pont `br-metrics` :
+  # invisible depuis le LAN et Tailscale. Démarre même si le pont n'existe pas
+  # encore grâce à net.ipv4.ip_nonlocal_bind=1.
+  # Nécessite une règle UFW (voir README).
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    container_name: node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=10.203.0.1:9100
+    network_mode: host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    mem_limit: 64m
+
+  # Métriques par conteneur. Passe par le socket-proxy en lecture seule de la
+  # stack `monitoring` plutôt que par le socket Docker.
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.6
+    container_name: cadvisor
+    restart: unless-stopped
+    command:
+      - --docker=tcp://socket-proxy:2375
+      - --docker_only=true
+      - --housekeeping_interval=30s            # défaut 1s : trop pour l'i5-3337U
+      - --enable_metrics=cpu,memory,network,diskIO,oom_event,pressure   # pas `disk` (du sur chaque conteneur)
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
+    volumes:
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg                              # événements OOM
+    cap_add: [SYSLOG]                          # lecture de /dev/kmsg (dmesg_restrict=1)
+    networks: [metrics, socket]
+    mem_limit: 256m
+
+  # SMART des deux SSD (usure, température, erreurs).
+  smartctl-exporter:
+    image: prometheuscommunity/smartctl-exporter:v0.14.0
+    container_name: smartctl-exporter
+    restart: unless-stopped
+    user: root
+    devices:
+      - /dev/sda
+      - /dev/sdb
+    cap_add: [SYS_RAWIO]                       # requêtes ATA (SG_IO)
+    networks: [metrics]
+    mem_limit: 64m
+
+configs:
+  prometheus_config:
+    content: |
+      global:
+        scrape_interval: 30s
+        evaluation_interval: 30s
+
+      alerting:
+        alertmanagers:
+          - static_configs:
+              - targets: ["alertmanager:9093"]
+
+      rule_files:
+        - /etc/prometheus/rules.yml
+
+      scrape_configs:
+        - job_name: prometheus
+          static_configs:
+            - targets: ["localhost:9090"]
+
+        - job_name: alertmanager
+          static_configs:
+            - targets: ["alertmanager:9093"]
+
+        - job_name: grafana
+          static_configs:
+            - targets: ["grafana:3000"]
+
+        - job_name: node
+          static_configs:
+            - targets: ["10.203.0.1:9100"]
+              labels:
+                instance: s56c-srv
+
+        - job_name: cadvisor
+          static_configs:
+            - targets: ["cadvisor:8080"]
+              labels:
+                instance: s56c-srv
+
+        - job_name: smartctl
+          scrape_interval: 60s
+          static_configs:
+            - targets: ["smartctl-exporter:9633"]
+              labels:
+                instance: s56c-srv
+
+  prometheus_rules:
+    content: |
+      groups:
+        # Kuma surveille déjà « le conteneur tourne-t-il ? ». Ici : ressources,
+        # tendances, matériel, et la santé du pipeline lui-même.
+        - name: pipeline
+          rules:
+            # Toujours active. Alertmanager la transmet à healthchecks.io toutes
+            # les ~2 min : si elle cesse, Prometheus ou Alertmanager est tombé.
+            - alert: Watchdog
+              expr: vector(1)
+              labels:
+                severity: none
+              annotations:
+                summary: Pipeline Prometheus → Alertmanager vivant
+
+            - alert: CibleInjoignable
+              expr: up == 0
+              for: 3m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Prometheus n'arrive plus à collecter {{ $$labels.job }} ({{ $$labels.instance }})"
+
+        - name: hote
+          rules:
+            - alert: MemoireFaible
+              expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "RAM disponible : {{ $$value | humanizePercentage }}"
+
+            - alert: SwapSature
+              expr: 1 - node_memory_SwapFree_bytes / node_memory_SwapTotal_bytes > 0.5
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Swap utilisé à {{ $$value | humanizePercentage }}"
+
+            - alert: OomKillNoyau
+              expr: increase(node_vmstat_oom_kill[15m]) > 0
+              labels:
+                severity: warning
+              annotations:
+                summary: Le noyau a tué un processus faute de mémoire (voir dmesg)
+
+            - alert: DisquePresquePlein
+              expr: node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"} / node_filesystem_size_bytes < 0.15
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.mountpoint }} : {{ $$value | humanizePercentage }} libres"
+
+            - alert: DisquePresquePlein
+              expr: node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"} / node_filesystem_size_bytes < 0.05
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "{{ $$labels.mountpoint }} : {{ $$value | humanizePercentage }} libres"
+
+            - alert: DisquePleinSous24h
+              expr: |
+                predict_linear(node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"}[6h], 24 * 3600) < 0
+                and node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"} / node_filesystem_size_bytes < 0.40
+              for: 30m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.mountpoint }} sera plein dans moins de 24 h au rythme actuel"
+
+            - alert: CpuSature
+              expr: 1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.90
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "CPU occupé à {{ $$value | humanizePercentage }} depuis 15 min"
+
+            - alert: AttenteDisque
+              expr: avg by (instance) (rate(node_cpu_seconds_total{mode="iowait"}[5m])) > 0.20
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "iowait à {{ $$value | humanizePercentage }} : le disque ralentit le serveur"
+
+            - alert: Surchauffe
+              expr: node_hwmon_temp_celsius > 85
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.chip }} {{ $$labels.sensor }} à {{ $$value }} °C"
+
+            - alert: Surchauffe
+              expr: node_hwmon_temp_celsius > 95
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "{{ $$labels.chip }} {{ $$labels.sensor }} à {{ $$value }} °C"
+
+            - alert: HorlogeDesynchronisee
+              expr: node_timex_sync_status == 0 or abs(node_timex_offset_seconds) > 0.5
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: L'horloge n'est plus synchronisée par NTP (wikimastered compare des horodatages)
+
+            - alert: Redemarrage
+              expr: changes(node_boot_time_seconds[15m]) > 0
+              labels:
+                severity: warning
+              annotations:
+                summary: Le serveur a redémarré
+
+        - name: conteneurs
+          rules:
+            - alert: ConteneurProcheLimiteMemoire
+              expr: |
+                container_memory_working_set_bytes{name!=""}
+                  / (container_spec_memory_limit_bytes{name!=""} > 0) > 0.90
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.name }} utilise {{ $$value | humanizePercentage }} de sa limite mémoire"
+
+            - alert: ConteneurOomKill
+              expr: increase(container_oom_events_total{name!=""}[15m]) > 0
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.name }} a été tué faute de mémoire (mem_limit trop bas ?)"
+
+            - alert: ConteneurRedemarreEnBoucle
+              expr: changes(container_start_time_seconds{name!=""}[30m]) > 3
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.name }} a redémarré {{ $$value }} fois en 30 min"
+
+        - name: disques
+          rules:
+            - alert: SmartEnEchec
+              expr: smartctl_device_smart_status != 1
+              labels:
+                severity: critical
+              annotations:
+                summary: "SMART en échec sur {{ $$labels.device }} : sauvegarder et remplacer"
+
+            - alert: SsdUse
+              expr: smartctl_device_percentage_used > 80
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.device }} : {{ $$value }} % de l'endurance consommée"
+
+            - alert: SsdChaud
+              expr: smartctl_device_temperature{temperature_type="current"} > 60
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.device }} à {{ $$value }} °C"
+
+  alertmanager_config:
+    content: |
+      route:
+        receiver: discord
+        group_by: [alertname, instance]
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 12h
+        routes:
+          - matchers: ['alertname="Watchdog"']
+            receiver: healthchecks
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 2m
+
+      # Une alerte critique masque sa version warning (même nom, même cible).
+      inhibit_rules:
+        - source_matchers: ['severity="critical"']
+          target_matchers: ['severity="warning"']
+          equal: [alertname, instance, mountpoint, chip, sensor]
+
+      receivers:
+        - name: discord
+          discord_configs:
+            - webhook_url_file: /run/secrets/discord_webhook_url
+              send_resolved: true
+              username: Prometheus
+              title: '{{ if eq .Status "firing" }}🔴{{ else }}✅{{ end }} {{ .CommonLabels.alertname }}{{ if gt (len .Alerts) 1 }} ×{{ len .Alerts }}{{ end }}'
+              message: |-
+                {{ range .Alerts }}**{{ .Labels.severity }}** · {{ .Annotations.summary }}
+                {{ end }}
+
+        - name: healthchecks
+          webhook_configs:
+            - url_file: /run/secrets/healthchecks_watchdog_url
+              send_resolved: false
+
+  grafana_datasources:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          uid: prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus:9090
+          isDefault: true
+          jsonData:
+            timeInterval: 30s
+
+# Valeurs renseignées dans les variables de la stack Portainer, jamais dans git.
+# Compose les copie dans /run/secrets/<nom> (lecture seule).
+secrets:
+  discord_webhook_url:
+    environment: DISCORD_WEBHOOK_URL
+  healthchecks_watchdog_url:
+    environment: HEALTHCHECKS_WATCHDOG_URL
+  grafana_admin_password:
+    environment: GRAFANA_ADMIN_PASSWORD
+
+volumes:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:
+
+networks:
+  metrics:
+    name: metrics
+    driver_opts:
+      com.docker.network.bridge.name: br-metrics   # nom d'interface fixe pour UFW
+    ipam:
+      config:
+        - subnet: 10.203.0.0/24
+          gateway: 10.203.0.1
+  socket:
+    name: monitoring_socket                         # réseau du socket-proxy (stack monitoring)
+    external: true

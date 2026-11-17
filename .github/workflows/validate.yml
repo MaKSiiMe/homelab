@@ -1,0 +1,62 @@
+name: validate
+
+# Portainer redéploie `main` automatiquement : une config cassée poussée ici
+# casserait le monitoring. Ce workflow vérifie tout avant.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        stack: [monitoring, metrics]
+    steps:
+      - uses: actions/checkout@v5
+      - name: docker compose config
+        working-directory: ${{ matrix.stack }}
+        env:   # valeurs factices : seules les variables Portainer ont les vraies
+          DISCORD_WEBHOOK_URL: https://discord.invalid/x
+          HEALTHCHECKS_WATCHDOG_URL: https://hc-ping.invalid/x
+          GRAFANA_ADMIN_PASSWORD: x
+        run: docker compose config --quiet
+
+  metrics-configs:
+    runs-on: ubuntu-latest
+    env:
+      PROMETHEUS_IMAGE: prom/prometheus:v3.15.1
+      ALERTMANAGER_IMAGE: prom/alertmanager:v0.34.2
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Extraire les configs en ligne
+        working-directory: metrics
+        env:
+          DISCORD_WEBHOOK_URL: https://discord.invalid/x
+          HEALTHCHECKS_WATCHDOG_URL: https://hc-ping.invalid/x
+          GRAFANA_ADMIN_PASSWORD: x
+        run: |
+          mkdir -p "$RUNNER_TEMP/cfg"
+          docker compose config --format json > "$RUNNER_TEMP/metrics.json"
+          for c in prometheus_config prometheus_rules alertmanager_config; do
+            # `compose config` ré-échappe les `$` en `$$` : on revient au contenu réel
+            jq -r ".configs.$c.content" "$RUNNER_TEMP/metrics.json" | sed 's/\$\$/$/g' > "$RUNNER_TEMP/cfg/$c.yml"
+          done
+
+      - name: promtool check config (+ règles)
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "$RUNNER_TEMP/cfg/prometheus_config.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$RUNNER_TEMP/cfg/prometheus_rules.yml:/etc/prometheus/rules.yml:ro" \
+            "$PROMETHEUS_IMAGE" check config /etc/prometheus/prometheus.yml
+
+      - name: amtool check-config
+        run: |
+          docker run --rm --entrypoint amtool \
+            -v "$RUNNER_TEMP/cfg/alertmanager_config.yml:/etc/alertmanager/alertmanager.yml:ro" \
+            "$ALERTMANAGER_IMAGE" check-config /etc/alertmanager/alertmanager.yml
