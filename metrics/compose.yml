@@ -12,9 +12,13 @@ name: metrics
 #  2. Compose ne recrée pas un conteneur quand seul le contenu d'une config
 #     change. Après toute modification sous `configs:`, incrémenter
 #     `homelab.config-rev` ci-dessous, sinon l'ancienne config reste en place.
+#  3. Exception : les configs `*_url` / `*_password` en fin de bloc portent des
+#     secrets et utilisent volontairement `${VAR:?…}` (un seul `$`) : la valeur
+#     vient des variables de la stack Portainer. Après un changement de secret
+#     dans Portainer, incrémenter aussi `homelab.config-rev`.
 
 x-config-rev: &config-rev
-  homelab.config-rev: "1"
+  homelab.config-rev: "2"
 
 services:
   prometheus:
@@ -53,9 +57,10 @@ services:
     configs:
       - source: alertmanager_config
         target: /etc/alertmanager/alertmanager.yml
-    secrets:
-      - discord_webhook_url
-      - healthchecks_watchdog_url
+      - source: discord_webhook_url
+        target: /run/secrets/discord_webhook_url
+      - source: healthchecks_watchdog_url
+        target: /run/secrets/healthchecks_watchdog_url
     volumes:
       - alertmanager_data:/alertmanager       # silences et état des notifications
     ports:
@@ -77,8 +82,8 @@ services:
     configs:
       - source: grafana_datasources
         target: /etc/grafana/provisioning/datasources/prometheus.yml
-    secrets:
-      - grafana_admin_password
+      - source: grafana_admin_password
+        target: /run/secrets/grafana_admin_password
     volumes:
       - grafana_data:/var/lib/grafana
     ports:
@@ -105,8 +110,13 @@ services:
       - /:/host:ro,rslave
     mem_limit: 64m
 
-  # Métriques par conteneur. Passe par le socket-proxy en lecture seule de la
-  # stack `monitoring` plutôt que par le socket Docker.
+  # Métriques par conteneur. API Docker via le socket-proxy en lecture seule
+  # de la stack `monitoring`. Docker utilise le stockage d'images de containerd
+  # (snapshotter `overlayfs`) : cAdvisor doit alors interroger containerd pour
+  # chaque conteneur, sinon sa factory Docker ne s'enregistre pas et aucun
+  # conteneur n'est nommé. ⚠️ Ce socket donne un contrôle total sur containerd
+  # (`:ro` ne restreint pas l'API) : compromis accepté, cAdvisor n'a aucun port
+  # publié et son image est épinglée.
   cadvisor:
     image: ghcr.io/google/cadvisor:v0.60.6
     container_name: cadvisor
@@ -123,6 +133,7 @@ services:
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
     devices:
       - /dev/kmsg                              # événements OOM
     cap_add: [SYSLOG]                          # lecture de /dev/kmsg (dmesg_restrict=1)
@@ -411,15 +422,15 @@ configs:
           jsonData:
             timeInterval: 30s
 
-# Valeurs renseignées dans les variables de la stack Portainer, jamais dans git.
-# Compose les copie dans /run/secrets/<nom> (lecture seule).
-secrets:
+  # Secrets : valeurs dans les variables de la stack Portainer, jamais dans git.
+  # Passés par interpolation `${VAR:?}` (`secrets: environment:` ne reçoit pas
+  # les variables Portainer) et copiés dans /run/secrets/<nom> (mode 0444).
   discord_webhook_url:
-    environment: DISCORD_WEBHOOK_URL
+    content: ${DISCORD_WEBHOOK_URL:?à définir dans les variables de la stack Portainer}
   healthchecks_watchdog_url:
-    environment: HEALTHCHECKS_WATCHDOG_URL
+    content: ${HEALTHCHECKS_WATCHDOG_URL:?à définir dans les variables de la stack Portainer}
   grafana_admin_password:
-    environment: GRAFANA_ADMIN_PASSWORD
+    content: ${GRAFANA_ADMIN_PASSWORD:?à définir dans les variables de la stack Portainer}
 
 volumes:
   prometheus_data:

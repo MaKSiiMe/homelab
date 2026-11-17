@@ -26,7 +26,7 @@ Portainer CE ne monte pas les fichiers du dépôt (chemins relatifs réservés �
 2. **Incrémenter `homelab.config-rev`** après toute modification d'une config : Compose ne recrée pas un conteneur quand seul le contenu d'une config change.
 3. La CI (`.github/workflows/validate.yml`) rend le compose et passe les configs à `promtool` et `amtool`. Ne pas fusionner si elle est rouge : Portainer déploierait la config cassée.
 
-**Variables Portainer de la stack `metrics`** : `DISCORD_WEBHOOK_URL`, `HEALTHCHECKS_WATCHDOG_URL`, `GRAFANA_ADMIN_PASSWORD` (ce dernier n'est lu qu'à la création de la base Grafana).
+**Variables Portainer de la stack `metrics`** : `DISCORD_WEBHOOK_URL`, `HEALTHCHECKS_WATCHDOG_URL`, `GRAFANA_ADMIN_PASSWORD` (ce dernier n'est lu qu'à la création de la base Grafana). Elles sont injectées par interpolation (`${VAR:?}`) dans des configs montées sous `/run/secrets/` : `secrets: environment:` ne reçoit pas les variables Portainer. Après avoir changé l'une d'elles, incrémenter `homelab.config-rev`.
 
 **Prérequis sur l'hôte**
 - `net.ipv4.ip_nonlocal_bind = 1` (déjà en place pour la stack `monitoring`).
@@ -35,5 +35,6 @@ Portainer CE ne monte pas les fichiers du dépôt (chemins relatifs réservés �
   sudo ufw allow in on br-metrics to 10.203.0.1 port 9100 proto tcp comment 'Prometheus -> node_exporter'
   ```
 - La stack `monitoring` doit tourner (cAdvisor passe par son socket-proxy, réseau `monitoring_socket`).
+- cAdvisor monte `/run/containerd/containerd.sock` : Docker utilise le stockage d'images de containerd, et sans ce socket cAdvisor ne nomme aucun conteneur. Ce socket équivaut à un accès root ; compromis accepté (aucun port publié, image épinglée).
 
 **Accès (Tailscale uniquement)** : Grafana `:3000`, Prometheus `:9090`, Alertmanager `:9093` sur `100.124.153.20`.
