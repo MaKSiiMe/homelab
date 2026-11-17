@@ -1,0 +1,48 @@
+name: monitoring
+
+services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest   # à épingler (backlog)
+    container_name: socket-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1   # liste + inspect (Kuma, Dozzle)
+      INFO: 1
+      EVENTS: 1
+      POST: 0         # lecture seule : aucune action possible
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [socket]
+    mem_limit: 64m
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    container_name: uptime-kuma
+    restart: unless-stopped
+    volumes:
+      - kuma_data:/app/data
+    ports:
+      - "100.124.153.20:3001:3001"
+    networks: [socket, monitoring]
+    mem_limit: 384m
+
+  dozzle:
+    image: amir20/dozzle:v10
+    container_name: dozzle
+    restart: unless-stopped
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
+    ports:
+      - "100.124.153.20:8081:8080"
+    networks: [socket, monitoring]
+    depends_on: [socket-proxy]
+    mem_limit: 128m
+
+volumes:
+  kuma_data:
+
+networks:
+  socket:
+    internal: true      # le proxy n'a aucun accès à l'extérieur
+  monitoring:
+    name: monitoring    # nom fixe, réutilisable par d'autres stacks
