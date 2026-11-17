@@ -23,7 +23,7 @@ services:
       - kuma_data:/app/data
     ports:
       - "100.124.153.20:3001:3001"
-    networks: [socket, monitoring]
+    networks: [socket, monitoring, voxelplace]
     mem_limit: 384m
 
   dozzle:
@@ -46,3 +46,6 @@ networks:
     internal: true      # le proxy n'a aucun accès à l'extérieur
   monitoring:
     name: monitoring    # nom fixe, réutilisable par d'autres stacks
+  voxelplace:
+    name: voxelplace_default
+    external: true
