@@ -18,6 +18,10 @@ Les secrets ne sont jamais dans ce dépôt : ce sont des variables de la stack d
 | Kuma est-il vivant ? | cron → healthchecks.io | Discord (healthchecks.io) |
 | Prometheus et Alertmanager sont-ils vivants ? | alerte `Watchdog` → healthchecks.io | Discord (healthchecks.io) |
 
+## Limites mémoire : pas de swap
+
+Tout service avec un `mem_limit` doit avoir un `memswap_limit` **égal** (la CI le vérifie). Sans `memswap_limit`, Docker autorise un swap égal à la limite (`memswap_limit` = 2 × `mem_limit`), et ce swap est sur le SSD. Un conteneur trop serré n'est alors pas tué : il swappe et relit son cache en boucle, ce qui use le disque sans qu'on le voie. Exemple : grafana le 18/11, avec une limite de 256m, avait ~124 Mo en swap, et avait lu 91 Go et écrit 39 Go en 17 h, sans aucun utilisateur. Sans swap, la limite est atteinte franchement : OOM kill, signalé par l'alerte `ConteneurOomKill`, et on augmente `mem_limit`.
+
 ## Stack `metrics` : règles d'édition
 
 Portainer CE ne monte pas les fichiers du dépôt (chemins relatifs réservés à la Business Edition). Les configurations sont donc écrites en ligne dans `metrics/compose.yml` (`configs: content`) et copiées dans les conteneurs à leur création.

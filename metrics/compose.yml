@@ -43,6 +43,7 @@ services:
       - "100.124.153.20:9090:9090"
     networks: [metrics]
     mem_limit: 512m
+    memswap_limit: 512m
 
   alertmanager:
     image: prom/alertmanager:v0.34.2
@@ -67,6 +68,7 @@ services:
       - "100.124.153.20:9093:9093"
     networks: [metrics]
     mem_limit: 64m
+    memswap_limit: 64m
 
   grafana:
     image: grafana/grafana:13.3.1
@@ -114,6 +116,7 @@ services:
     volumes:
       - /:/host:ro,rslave
     mem_limit: 64m
+    memswap_limit: 64m
 
   # Métriques par conteneur. API Docker via le socket-proxy en lecture seule
   # de la stack `monitoring`. Docker utilise le stockage d'images de containerd
@@ -144,6 +147,7 @@ services:
     cap_add: [SYSLOG]                          # lecture de /dev/kmsg (dmesg_restrict=1)
     networks: [metrics, socket]
     mem_limit: 256m
+    memswap_limit: 256m
 
   # SMART des deux SSD (usure, température, erreurs).
   smartctl-exporter:
@@ -157,6 +161,7 @@ services:
     cap_add: [SYS_RAWIO]                       # requêtes ATA (SG_IO)
     networks: [metrics]
     mem_limit: 64m
+    memswap_limit: 64m
 
 configs:
   prometheus_config:
