@@ -14,6 +14,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [socket]
     mem_limit: 64m
+    memswap_limit: 64m
 
   uptime-kuma:
     image: louislam/uptime-kuma:2
@@ -25,6 +26,7 @@ services:
       - "100.124.153.20:3001:3001"
     networks: [socket, monitoring, voxelplace]
     mem_limit: 384m
+    memswap_limit: 384m
 
   dozzle:
     image: amir20/dozzle:v10
@@ -37,6 +39,7 @@ services:
     networks: [socket, monitoring]
     depends_on: [socket-proxy]
     mem_limit: 128m
+    memswap_limit: 128m
 
 volumes:
   kuma_data:

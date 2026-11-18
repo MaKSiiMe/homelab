@@ -26,6 +26,34 @@ jobs:
           GRAFANA_ADMIN_PASSWORD: x
         run: docker compose config --quiet
 
+  # mem_limit sans memswap_limit égal = autant de swap (sur le SSD) que de RAM.
+  memswap:
+    runs-on: ubuntu-latest
+    env:   # valeurs factices : seules les variables Portainer ont les vraies
+      DISCORD_WEBHOOK_URL: https://discord.invalid/x
+      HEALTHCHECKS_WATCHDOG_URL: https://hc-ping.invalid/x
+      GRAFANA_ADMIN_PASSWORD: x
+    steps:
+      - uses: actions/checkout@v5
+      - name: mem_limit ⇒ memswap_limit égal
+        run: |
+          status=0
+          for f in $(git ls-files '*compose*.yml' '*compose*.yaml'); do
+            # `compose config` normalise les tailles en octets : comparaison fiable
+            bad=$(docker compose -f "$f" config --format json | jq -r '
+              .services | to_entries[]
+              | select(.value.mem_limit != null and .value.memswap_limit != .value.mem_limit)
+              | "\(.key) (mem_limit \(.value.mem_limit), memswap_limit \(.value.memswap_limit // "absent"))"')
+            if [ -n "$bad" ]; then
+              echo "::error file=$f::memswap_limit doit être égal à mem_limit (voir README) :"
+              echo "$bad" | sed 's/^/  /'
+              status=1
+            else
+              echo "$f : OK"
+            fi
+          done
+          exit $status
+
   metrics-configs:
     runs-on: ubuntu-latest
     env:
