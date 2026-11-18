@@ -1,0 +1,110 @@
+# Tests unitaires des règles d'alerte (`promtool test rules`).
+#
+# Les règles vivent en ligne dans compose.yml : la CI (validate.yml) les extrait
+# vers prometheus_rules.yml, à côté de ce fichier, puis lance promtool.
+# Ici, pas d'interpolation Compose : un seul `$`.
+rule_files:
+  - prometheus_rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ConteneurProcheLimiteMemoire : le working set oscille autour de 90 %
+  # (cas grafana à 256m). Attendu : un pic de moins de 15 min ne déclenche pas,
+  # puis une seule alerte qui tient pendant les creux de moins de 15 min.
+  - name: memoire-oscillation-une-seule-alerte
+    interval: 1m
+    input_series:
+      - series: container_spec_memory_limit_bytes{name="grafana"}
+        values: "1000x209"
+      # min  0-19 : 85 %   20-29 : 95 % (pic de 10 min)   30-39 : 85 %
+      #     40-69 : 93 %   70-79 : 88 % (creux 10 min)    80-109 : 96 %
+      #   110-121 : 87 % (creux 12 min)  122-149 : 94 %   150-209 : 80 %
+      - series: container_memory_working_set_bytes{name="grafana"}
+        values: "850x19 950x9 850x9 930x29 880x9 960x29 870x11 940x27 800x59"
+    alert_rule_test:
+      - eval_time: 29m          # pic de 10 min : jamais déclenchée
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts: []
+      - eval_time: 36m
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts: []
+      - eval_time: 50m          # au-dessus depuis 10 min : encore pending
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts: []
+      - eval_time: 56m          # au-dessus depuis 16 min : déclenchée
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts:
+          - exp_labels: {severity: warning, name: grafana}
+            exp_annotations: {summary: "grafana utilise 93% de sa limite mémoire"}
+      - eval_time: 75m          # creux à 88 % : keep_firing_for la maintient
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts:
+          - exp_labels: {severity: warning, name: grafana}
+            exp_annotations: {summary: "grafana utilise 93% de sa limite mémoire"}   # valeur figée au dernier déclenchement
+      - eval_time: 79m
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts:
+          - exp_labels: {severity: warning, name: grafana}
+            exp_annotations: {summary: "grafana utilise 93% de sa limite mémoire"}
+      - eval_time: 90m
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts:
+          - exp_labels: {severity: warning, name: grafana}
+            exp_annotations: {summary: "grafana utilise 96% de sa limite mémoire"}
+      - eval_time: 121m         # second creux, 12 min
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts:
+          - exp_labels: {severity: warning, name: grafana}
+            exp_annotations: {summary: "grafana utilise 96% de sa limite mémoire"}
+      - eval_time: 140m
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts:
+          - exp_labels: {severity: warning, name: grafana}
+            exp_annotations: {summary: "grafana utilise 94% de sa limite mémoire"}
+      - eval_time: 164m         # sous le seuil depuis 15 min : encore maintenue
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts:
+          - exp_labels: {severity: warning, name: grafana}
+            exp_annotations: {summary: "grafana utilise 94% de sa limite mémoire"}
+      - eval_time: 166m         # puis résolue
+        alertname: ConteneurProcheLimiteMemoire
+        exp_alerts: []
+
+  # ConteneurThrashing : défauts majeurs soutenus → alerte ; conteneur sain,
+  # pic isolé au démarrage, défauts mineurs et scope hierarchy → rien.
+  - name: thrashing
+    interval: 1m
+    input_series:
+      # 200 défauts majeurs/s (grafana à 256m tournait entre 16 et 400/s)
+      - series: container_memory_failures_total{name="grafana",failure_type="pgmajfault",scope="container"}
+        values: "0+12000x60"
+      # même compteur en scope hierarchy : ne doit pas doubler l'alerte
+      - series: container_memory_failures_total{name="grafana",failure_type="pgmajfault",scope="hierarchy"}
+        values: "0+12000x60"
+      # défauts mineurs : normaux, ignorés
+      - series: container_memory_failures_total{name="grafana",failure_type="pgfault",scope="container"}
+        values: "0+60000x60"
+      # conteneur sain : 1/s (pic observé ~1,3/s)
+      - series: container_memory_failures_total{name="portainer",failure_type="pgmajfault",scope="container"}
+        values: "0+60x60"
+      # démarrage : 90 000 défauts d'un coup puis plus rien (150/s sur 10 min)
+      - series: container_memory_failures_total{name="nouveau",failure_type="pgmajfault",scope="container"}
+        values: "0 0 90000x58"
+    alert_rule_test:
+      - eval_time: 10m          # pending
+        alertname: ConteneurThrashing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ConteneurThrashing
+        exp_alerts: &thrashing-grafana
+          - exp_labels:
+              severity: warning
+              name: grafana
+              failure_type: pgmajfault
+              scope: container
+            exp_annotations:
+              summary: "grafana relit sa mémoire depuis le disque (200 défauts majeurs/s) : mem_limit trop bas ?"
+      - eval_time: 45m
+        alertname: ConteneurThrashing
+        exp_alerts: *thrashing-grafana

@@ -55,6 +55,13 @@ jobs:
             -v "$RUNNER_TEMP/cfg/prometheus_rules.yml:/etc/prometheus/rules.yml:ro" \
             "$PROMETHEUS_IMAGE" check config /etc/prometheus/prometheus.yml
 
+      - name: promtool test rules
+        run: |
+          cp metrics/tests/*_test.yml "$RUNNER_TEMP/cfg/"   # à côté de prometheus_rules.yml
+          docker run --rm --entrypoint promtool -w /cfg \
+            -v "$RUNNER_TEMP/cfg:/cfg:ro" \
+            "$PROMETHEUS_IMAGE" test rules $(cd "$RUNNER_TEMP/cfg" && ls *_test.yml)
+
       - name: amtool check-config
         run: |
           docker run --rm --entrypoint amtool \

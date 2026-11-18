@@ -18,7 +18,7 @@ name: metrics
 #     dans Portainer, incrémenter aussi `homelab.config-rev`.
 
 x-config-rev: &config-rev
-  homelab.config-rev: "2"
+  homelab.config-rev: "3"
 
 services:
   prometheus:
@@ -90,7 +90,12 @@ services:
       - "100.124.153.20:3000:3000"
     networks: [metrics]
     depends_on: [prometheus]
-    mem_limit: 256m
+    # 256m ne suffisait pas : ~190 Mo anonymes au repos, le reste de la limite ne
+    # tenait pas le binaire et grafana.db en cache (évincés puis relus en boucle,
+    # ~90 Go lus en 17 h). Pas de swap : il est sur le SSD, un OOM se voit
+    # (ConteneurOomKill), une usure silencieuse non.
+    mem_limit: 512m
+    memswap_limit: 512m
 
   # Métriques de l'hôte. Réseau de l'hôte (sinon on ne voit que le trafic du
   # conteneur), mais écoute uniquement sur la passerelle du pont `br-metrics` :
@@ -324,15 +329,33 @@ configs:
 
         - name: conteneurs
           rules:
+            # Working set = anonyme + cache actif : c'est ce que le noyau ne peut
+            # pas récupérer sans relire le disque. `for` + `keep_firing_for`
+            # contre le bagotage autour de 90 % (creux de moins de 15 min ignorés).
             - alert: ConteneurProcheLimiteMemoire
               expr: |
                 container_memory_working_set_bytes{name!=""}
                   / (container_spec_memory_limit_bytes{name!=""} > 0) > 0.90
-              for: 10m
+              for: 15m
+              keep_firing_for: 15m
               labels:
                 severity: warning
               annotations:
                 summary: "{{ $$labels.name }} utilise {{ $$value | humanizePercentage }} de sa limite mémoire"
+
+            # Défauts de page majeurs = pages relues depuis le disque (cache évincé
+            # ou swap). Au repos, les conteneurs sains ne dépassent pas ~1,3/s sur
+            # 10 min (démarrages compris) ; grafana à 256m n'est jamais descendu
+            # sous 16/s. Seuil 10/s entre les deux. Fenêtre 10m < for 15m : un pic
+            # isolé (démarrage) sort de la fenêtre avant de pouvoir déclencher.
+            - alert: ConteneurThrashing
+              expr: |
+                rate(container_memory_failures_total{failure_type="pgmajfault",scope="container",name!=""}[10m]) > 10
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.name }} relit sa mémoire depuis le disque ({{ $$value | humanize }} défauts majeurs/s) : mem_limit trop bas ?"
 
             - alert: ConteneurOomKill
               expr: increase(container_oom_events_total{name!=""}[15m]) > 0
@@ -400,8 +423,9 @@ configs:
               send_resolved: true
               username: Prometheus
               title: '{{ if eq .Status "firing" }}🔴{{ else }}✅{{ end }} {{ .CommonLabels.alertname }}{{ if gt (len .Alerts) 1 }} ×{{ len .Alerts }}{{ end }}'
+              # Résolue : pas de summary, sa valeur est figée au dernier déclenchement.
               message: |-
-                {{ range .Alerts }}**{{ .Labels.severity }}** · {{ .Annotations.summary }}
+                {{ range .Alerts }}**{{ .Labels.severity }}** · {{ if eq .Status "firing" }}{{ .Annotations.summary }}{{ else }}{{ or .Labels.name .Labels.mountpoint .Labels.device .Labels.sensor .Labels.job .Labels.instance }} : repassé sous le seuil{{ end }}
                 {{ end }}
 
         - name: healthchecks
