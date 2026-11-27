@@ -102,8 +102,10 @@ services:
     # tenait pas le binaire et grafana.db en cache (évincés puis relus en boucle,
     # ~90 Go lus en 17 h). Pas de swap : il est sur le SSD, un OOM se voit
     # (ConteneurOomKill), une usure silencieuse non.
-    mem_limit: 512m
-    memswap_limit: 512m
+    # 512m -> 640m le 27/11 : ~400 Mo avant le tableau de bord SN44, 495 Mo après
+    # (ConteneurProcheLimiteMemoire à 91,6 %).
+    mem_limit: 640m
+    memswap_limit: 640m
 
   # Métriques de l'hôte. Réseau de l'hôte (sinon on ne voit que le trafic du
   # conteneur), mais écoute uniquement sur la passerelle du pont `br-metrics` :
