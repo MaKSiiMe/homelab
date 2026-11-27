@@ -6,6 +6,7 @@ Infrastructure du serveur `s56c-srv` (Debian 13, Docker + Portainer CE), gérée
 |---|---|---|
 | `monitoring/` | `monitoring` | Uptime Kuma, Dozzle, socket-proxy Docker en lecture seule |
 | `metrics/` | `metrics` | Prometheus, Alertmanager, Grafana, node_exporter, cAdvisor, smartctl_exporter |
+| `sn44/` | `sn44` | Collecteur de données du minage Bittensor SN44 (image `ghcr.io/maksiime/sn44-collector`, code dans `MaKSiiMe/sn44-miner`) |
 
 Les secrets ne sont jamais dans ce dépôt : ce sont des variables de la stack dans Portainer.
 
@@ -17,6 +18,7 @@ Les secrets ne sont jamais dans ce dépôt : ce sont des variables de la stack d
 | Les ressources tiennent-elles (RAM, disque, CPU, température, SSD) ? | Prometheus → Alertmanager | Discord `#alertes` |
 | Kuma est-il vivant ? | cron → healthchecks.io | Discord (healthchecks.io) |
 | Prometheus et Alertmanager sont-ils vivants ? | alerte `Watchdog` → healthchecks.io | Discord (healthchecks.io) |
+| Le collecteur SN44 tourne-t-il, Score a-t-il changé son manifest ? | Prometheus (job `sn44`, label `projet=sn44`) → Alertmanager | Discord `#sn44` |
 
 ## Limites mémoire : pas de swap
 
@@ -30,7 +32,7 @@ Portainer CE ne monte pas les fichiers du dépôt (chemins relatifs réservés �
 2. **Incrémenter `homelab.config-rev`** après toute modification d'une config : Compose ne recrée pas un conteneur quand seul le contenu d'une config change.
 3. La CI (`.github/workflows/validate.yml`) rend le compose et passe les configs à `promtool` et `amtool`. Ne pas fusionner si elle est rouge : Portainer déploierait la config cassée.
 
-**Variables Portainer de la stack `metrics`** : `DISCORD_WEBHOOK_URL`, `HEALTHCHECKS_WATCHDOG_URL`, `GRAFANA_ADMIN_PASSWORD` (ce dernier n'est lu qu'à la création de la base Grafana). Elles sont injectées par interpolation (`${VAR:?}`) dans des configs montées sous `/run/secrets/` : `secrets: environment:` ne reçoit pas les variables Portainer. Après avoir changé l'une d'elles, incrémenter `homelab.config-rev`.
+**Variables Portainer de la stack `metrics`** : `DISCORD_WEBHOOK_URL`, `HEALTHCHECKS_WATCHDOG_URL`, `GRAFANA_ADMIN_PASSWORD`, `SN44_DISCORD_WEBHOOK_URL` (webhook du canal `#sn44`) (ce dernier n'est lu qu'à la création de la base Grafana). Elles sont injectées par interpolation (`${VAR:?}`) dans des configs montées sous `/run/secrets/` : `secrets: environment:` ne reçoit pas les variables Portainer. Après avoir changé l'une d'elles, incrémenter `homelab.config-rev`.
 
 **Prérequis sur l'hôte**
 - `net.ipv4.ip_nonlocal_bind = 1` (déjà en place pour la stack `monitoring`).
@@ -42,3 +44,9 @@ Portainer CE ne monte pas les fichiers du dépôt (chemins relatifs réservés �
 - cAdvisor monte `/run/containerd/containerd.sock` : Docker utilise le stockage d'images de containerd, et sans ce socket cAdvisor ne nomme aucun conteneur. Ce socket équivaut à un accès root ; compromis accepté (aucun port publié, image épinglée).
 
 **Accès (Tailscale uniquement)** : Grafana `:3000`, Prometheus `:9090`, Alertmanager `:9093` sur `100.124.153.20`.
+
+## Stack `sn44`
+
+Collecteur 24/7 des données publiques de Score pour le minage du subnet 44 : il n'a ni clé ni secret, ne publie aucun port, et rejoint le réseau `metrics` pour être scrapé (job `sn44`). Ses données (shards, réponses, images, ~80 Mo/jour, ~7 Go de rattrapage initial) sont dans le volume `sn44_data`.
+
+Déployer une nouvelle version du collecteur : changer le tag `sha-…` de l'image dans `sn44/compose.yml` par PR. Les alertes portant `projet="sn44"` partent sur le webhook `SN44_DISCORD_WEBHOOK_URL` (route dédiée dans Alertmanager).

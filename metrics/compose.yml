@@ -18,7 +18,7 @@ name: metrics
 #     dans Portainer, incrémenter aussi `homelab.config-rev`.
 
 x-config-rev: &config-rev
-  homelab.config-rev: "3"
+  homelab.config-rev: "4"
 
 services:
   prometheus:
@@ -62,6 +62,8 @@ services:
         target: /run/secrets/discord_webhook_url
       - source: healthchecks_watchdog_url
         target: /run/secrets/healthchecks_watchdog_url
+      - source: sn44_discord_webhook_url
+        target: /run/secrets/sn44_discord_webhook_url
     volumes:
       - alertmanager_data:/alertmanager       # silences et état des notifications
     ports:
@@ -209,6 +211,16 @@ configs:
             - targets: ["smartctl-exporter:9633"]
               labels:
                 instance: s56c-srv
+
+        # Stack sn44 : collecteur SN44. Le label projet route ses alertes
+        # (CibleInjoignable comprise) vers le webhook Discord dédié.
+        - job_name: sn44
+          scrape_interval: 60s
+          static_configs:
+            - targets: ["sn44-collector:9108"]
+              labels:
+                instance: s56c-srv
+                projet: sn44
 
   prometheus_rules:
     content: |
@@ -400,6 +412,49 @@ configs:
               annotations:
                 summary: "{{ $$labels.device }} à {{ $$value }} °C"
 
+        # Minage SN44 : santé du collecteur et changements côté Score.
+        - name: sn44
+          rules:
+            - alert: SN44CollecteurMuet
+              expr: time() - sn44_collector_last_success_timestamp_seconds{source="validator_index"} > 3 * 3600
+              for: 5m
+              labels:
+                severity: warning
+                projet: sn44
+              annotations:
+                summary: "Le collecteur SN44 n'a plus lu l'index du validateur depuis plus de 3 h"
+
+            # L'index reçoit un challenge par Element toutes les ~60 min. Figé 3 h :
+            # le validateur s'est arrêté ou a changé d'URL (commitment on-chain,
+            # mettre à jour SN44_VALIDATOR_BASE_URL). Pas d'alerte dans les 4 h
+            # qui suivent un démarrage du collecteur (historique trop court).
+            - alert: SN44IndexFige
+              expr: |
+                max(changes(sn44_validator_index_last_block[3h])) == 0
+                and on() (time() - max(process_start_time_seconds{job="sn44"})) > 4 * 3600
+              for: 10m
+              labels:
+                severity: warning
+                projet: sn44
+              annotations:
+                summary: "Aucun nouveau challenge dans l'index public du validateur SN44 depuis 3 h"
+
+            - alert: SN44NouveauManifest
+              expr: changes(sn44_manifest_block[1h]) > 0
+              labels:
+                severity: info
+                projet: sn44
+              annotations:
+                summary: "Score a publié un nouveau manifest (Elements ou poids modifiés)"
+
+            - alert: SN44ErreursCollecte
+              expr: sum by (source) (increase(sn44_collector_errors_total[1h])) > 50
+              labels:
+                severity: warning
+                projet: sn44
+              annotations:
+                summary: "Plus de 50 erreurs en 1 h sur une source du collecteur SN44"
+
   alertmanager_config:
     content: |
       route:
@@ -409,6 +464,8 @@ configs:
         group_interval: 5m
         repeat_interval: 12h
         routes:
+          - matchers: ['projet="sn44"']
+            receiver: discord-sn44
           - matchers: ['alertname="Watchdog"']
             receiver: healthchecks
             group_wait: 0s
@@ -431,6 +488,16 @@ configs:
               # Résolue : pas de summary, sa valeur est figée au dernier déclenchement.
               message: |-
                 {{ range .Alerts }}**{{ .Labels.severity }}** · {{ if eq .Status "firing" }}{{ .Annotations.summary }}{{ else }}{{ or .Labels.name .Labels.mountpoint .Labels.device .Labels.sensor .Labels.job .Labels.instance }} : repassé sous le seuil{{ end }}
+                {{ end }}
+
+        - name: discord-sn44
+          discord_configs:
+            - webhook_url_file: /run/secrets/sn44_discord_webhook_url
+              send_resolved: true
+              username: SN44
+              title: '{{ if eq .Status "firing" }}🔴{{ else }}✅{{ end }} {{ .CommonLabels.alertname }}{{ if gt (len .Alerts) 1 }} ×{{ len .Alerts }}{{ end }}'
+              message: |-
+                {{ range .Alerts }}**{{ .Labels.severity }}** · {{ if eq .Status "firing" }}{{ .Annotations.summary }}{{ else }}{{ or .Labels.source .Labels.job .Labels.instance "sn44" }} : résolu{{ end }}
                 {{ end }}
 
         - name: healthchecks
@@ -460,6 +527,8 @@ configs:
     content: ${HEALTHCHECKS_WATCHDOG_URL:?à définir dans les variables de la stack Portainer}
   grafana_admin_password:
     content: ${GRAFANA_ADMIN_PASSWORD:?à définir dans les variables de la stack Portainer}
+  sn44_discord_webhook_url:
+    content: ${SN44_DISCORD_WEBHOOK_URL:?à définir dans les variables de la stack Portainer}
 
 volumes:
   prometheus_data:

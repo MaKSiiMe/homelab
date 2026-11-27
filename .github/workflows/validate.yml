@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        stack: [monitoring, metrics]
+        stack: [monitoring, metrics, sn44]
     steps:
       - uses: actions/checkout@v5
       - name: docker compose config
@@ -24,6 +24,7 @@ jobs:
           DISCORD_WEBHOOK_URL: https://discord.invalid/x
           HEALTHCHECKS_WATCHDOG_URL: https://hc-ping.invalid/x
           GRAFANA_ADMIN_PASSWORD: x
+          SN44_DISCORD_WEBHOOK_URL: https://discord.invalid/x
         run: docker compose config --quiet
 
   # mem_limit sans memswap_limit égal = autant de swap (sur le SSD) que de RAM.
@@ -33,6 +34,7 @@ jobs:
       DISCORD_WEBHOOK_URL: https://discord.invalid/x
       HEALTHCHECKS_WATCHDOG_URL: https://hc-ping.invalid/x
       GRAFANA_ADMIN_PASSWORD: x
+      SN44_DISCORD_WEBHOOK_URL: https://discord.invalid/x
     steps:
       - uses: actions/checkout@v5
       - name: mem_limit ⇒ memswap_limit égal
@@ -68,6 +70,7 @@ jobs:
           DISCORD_WEBHOOK_URL: https://discord.invalid/x
           HEALTHCHECKS_WATCHDOG_URL: https://hc-ping.invalid/x
           GRAFANA_ADMIN_PASSWORD: x
+          SN44_DISCORD_WEBHOOK_URL: https://discord.invalid/x
         run: |
           mkdir -p "$RUNNER_TEMP/cfg"
           docker compose config --format json > "$RUNNER_TEMP/metrics.json"

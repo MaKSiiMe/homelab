@@ -1,0 +1,38 @@
+name: sn44
+
+# Minage Bittensor SN44 (Score / TurboVision) : collecteur de données publiques.
+# Code : MaKSiiMe/sn44-miner (privé). Image publique ghcr, tag épinglé : pour
+# déployer une nouvelle version, changer le tag ici par PR.
+#
+# Le collecteur lit les artefacts publics de Score (index du validateur central,
+# manifest, gagnants, conformité, liste noire), stocke shards, réponses et images
+# dans le volume sn44_data, et expose ses métriques sur :9108 (réseau metrics,
+# aucun port publié). Prometheus le scrape (job sn44) ; ses alertes partent sur
+# le webhook Discord dédié (variable SN44_DISCORD_WEBHOOK_URL de la stack metrics).
+#
+# Volume : ~80 Mo/jour en régime courant, ~7 Go pour le rattrapage initial de
+# l'archive (une seule fois, à 8 requêtes/s, environ 2 jours).
+
+services:
+  sn44-collector:
+    image: ghcr.io/maksiime/sn44-collector:sha-513191e
+    container_name: sn44-collector
+    restart: unless-stopped
+    environment:
+      SN44_POLL_INTERVAL_S: "1800"
+      SN44_REQUESTS_PER_S: "8"
+      SN44_BACKFILL: "1"
+    volumes:
+      - sn44_data:/data
+    networks: [metrics]
+    # Le rattrapage charge l'archive de l'index (~90 Mo de JSON) une fois.
+    mem_limit: 768m
+    memswap_limit: 768m
+
+volumes:
+  sn44_data:
+
+networks:
+  metrics:
+    name: metrics          # créé par la stack metrics
+    external: true

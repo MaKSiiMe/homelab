@@ -108,3 +108,52 @@ tests:
       - eval_time: 45m
         alertname: ConteneurThrashing
         exp_alerts: *thrashing-grafana
+
+  # SN44CollecteurMuet : dernière lecture réussie de l'index à t = 100 min
+  # (6000 s), puis plus rien. Seuil 3 h : dépassé à 280 min, + for 5m.
+  - name: sn44-collecteur-muet
+    interval: 1m
+    input_series:
+      - series: sn44_collector_last_success_timestamp_seconds{source="validator_index"}
+        values: "0+60x100 6000x300"
+    alert_rule_test:
+      - eval_time: 250m
+        alertname: SN44CollecteurMuet
+        exp_alerts: []
+      - eval_time: 290m
+        alertname: SN44CollecteurMuet
+        exp_alerts:
+          - exp_labels: {severity: warning, projet: sn44, source: validator_index}
+            exp_annotations: {summary: "Le collecteur SN44 n'a plus lu l'index du validateur depuis plus de 3 h"}
+
+  # SN44IndexFige : l'index avance pendant 2 h puis se fige. Fenêtre de 3 h sans
+  # changement atteinte à 301 min, + for 10m. Collecteur démarré à t = 0.
+  - name: sn44-index-fige
+    interval: 1m
+    input_series:
+      - series: process_start_time_seconds{job="sn44"}
+        values: "0x400"
+      - series: sn44_validator_index_last_block{element="manako_Detect-room-dirtiness-detection"}
+        values: "100+300x120 36100x280"
+    alert_rule_test:
+      - eval_time: 300m
+        alertname: SN44IndexFige
+        exp_alerts: []
+      - eval_time: 315m
+        alertname: SN44IndexFige
+        exp_alerts:
+          - exp_labels: {severity: warning, projet: sn44}
+            exp_annotations: {summary: "Aucun nouveau challenge dans l'index public du validateur SN44 depuis 3 h"}
+
+  # Pas d'alerte juste après un démarrage, même si l'historique est plat.
+  - name: sn44-index-fige-demarrage
+    interval: 1m
+    input_series:
+      - series: process_start_time_seconds{job="sn44"}
+        values: "0x400"
+      - series: sn44_validator_index_last_block{element="x"}
+        values: "500x400"
+    alert_rule_test:
+      - eval_time: 230m
+        alertname: SN44IndexFige
+        exp_alerts: []
