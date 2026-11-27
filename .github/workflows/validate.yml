@@ -79,6 +79,13 @@ jobs:
             jq -r ".configs.$c.content" "$RUNNER_TEMP/metrics.json" | sed 's/\$\$/$/g' > "$RUNNER_TEMP/cfg/$c.yml"
           done
 
+      - name: Tableaux de bord Grafana (JSON valide)
+        run: |
+          for c in $(jq -r '.configs | keys[] | select(startswith("grafana_dashboard_"))' "$RUNNER_TEMP/metrics.json"); do
+            jq -r ".configs.$c.content" "$RUNNER_TEMP/metrics.json" | sed 's/\$\$/$/g' | jq -e '.uid and .panels' > /dev/null
+            echo "$c : OK"
+          done
+
       - name: promtool check config (+ règles)
         run: |
           docker run --rm --entrypoint promtool \

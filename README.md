@@ -43,6 +43,8 @@ Portainer CE ne monte pas les fichiers du dépôt (chemins relatifs réservés �
 - La stack `monitoring` doit tourner (cAdvisor passe par son socket-proxy, réseau `monitoring_socket`).
 - cAdvisor monte `/run/containerd/containerd.sock` : Docker utilise le stockage d'images de containerd, et sans ce socket cAdvisor ne nomme aucun conteneur. Ce socket équivaut à un accès root ; compromis accepté (aucun port publié, image épinglée).
 
+**Tableaux de bord Grafana** : provisionnés depuis ce dépôt (configs `grafana_dashboard_*`, dossier `SN44`), en lecture seule dans l'interface. Pour les modifier, passer par une PR.
+
 **Accès (Tailscale uniquement)** : Grafana `:3000`, Prometheus `:9090`, Alertmanager `:9093` sur `100.124.153.20`.
 
 ## Stack `sn44`
