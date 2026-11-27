@@ -5,7 +5,8 @@ name: sn44
 # déployer une nouvelle version, changer le tag ici par PR.
 #
 # Le collecteur lit les artefacts publics de Score (index du validateur central,
-# manifest, gagnants, conformité, liste noire), stocke shards, réponses et images
+# manifest, gagnants, conformité, liste noire) et le metagraph du SN44 (API
+# publique taoswap, sans clé, ~2 requêtes/h), stocke shards, réponses et images
 # dans le volume sn44_data, et expose ses métriques sur :9108 (réseau metrics,
 # aucun port publié). Prometheus le scrape (job sn44) ; ses alertes partent sur
 # le webhook Discord dédié (variable SN44_DISCORD_WEBHOOK_URL de la stack metrics).
@@ -15,7 +16,7 @@ name: sn44
 
 services:
   sn44-collector:
-    image: ghcr.io/maksiime/sn44-collector:sha-fd54d30
+    image: ghcr.io/maksiime/sn44-collector:sha-5bc2d19
     container_name: sn44-collector
     restart: unless-stopped
     environment:
