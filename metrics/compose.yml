@@ -18,7 +18,7 @@ name: metrics
 #     dans Portainer, incrémenter aussi `homelab.config-rev`.
 
 x-config-rev: &config-rev
-  homelab.config-rev: "4"
+  homelab.config-rev: "5"
 
 services:
   prometheus:
@@ -86,6 +86,10 @@ services:
     configs:
       - source: grafana_datasources
         target: /etc/grafana/provisioning/datasources/prometheus.yml
+      - source: grafana_dashboards_provider
+        target: /etc/grafana/provisioning/dashboards/homelab.yml
+      - source: grafana_dashboard_sn44
+        target: /etc/grafana/dashboards/sn44.json
       - source: grafana_admin_password
         target: /run/secrets/grafana_admin_password
     volumes:
@@ -517,6 +521,46 @@ configs:
           isDefault: true
           jsonData:
             timeInterval: 30s
+
+  # Tableaux de bord versionnés ici, en lecture seule dans Grafana (allowUiUpdates
+  # false) : une modification passe par une PR, comme le reste.
+  grafana_dashboards_provider:
+    content: |
+      apiVersion: 1
+      providers:
+        - name: homelab
+          folder: SN44
+          type: file
+          disableDeletion: true
+          allowUiUpdates: false
+          updateIntervalSeconds: 300
+          options:
+            path: /etc/grafana/dashboards
+
+  # Minage SN44 : collecte, gagnants par Element, conformité, liste noire.
+  # Un panneau par ligne. Pas de `$` (Compose l'interpolerait) ; la CI vérifie le JSON.
+  grafana_dashboard_sn44:
+    content: |
+      {"uid": "sn44", "title": "SN44 — Score / TurboVision", "tags": ["sn44", "bittensor"], "timezone": "browser", "schemaVersion": 39, "version": 1, "editable": false, "refresh": "5m", "time": {"from": "now-7d", "to": "now"}, "panels": [
+        {"id":1,"type":"row","title":"Collecte","collapsed":false,"gridPos":{"x":0,"y":0,"w":24,"h":1},"panels":[]},
+        {"id":2,"type":"stat","title":"Cible sn44","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":0,"y":1,"w":4,"h":4},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"up{job=\"sn44\"}","instant":true}],"fieldConfig":{"defaults":{"unit":"short","thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]}},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"value","graphMode":"none","textMode":"value"}},
+        {"id":3,"type":"stat","title":"Dernière lecture de l'index","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":4,"y":1,"w":4,"h":4},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"time() - sn44_collector_last_success_timestamp_seconds{source=\"validator_index\"}","instant":true}],"fieldConfig":{"defaults":{"unit":"s","thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":3600},{"color":"red","value":10800}]}},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"value","graphMode":"none","textMode":"value"}},
+        {"id":4,"type":"stat","title":"Shards","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":8,"y":1,"w":4,"h":4},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sum(sn44_shards)","instant":true}],"fieldConfig":{"defaults":{"unit":"short"},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"value","graphMode":"none","textMode":"value"}},
+        {"id":5,"type":"stat","title":"Challenges / images","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":12,"y":1,"w":4,"h":4},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sum(sn44_challenges)","instant":true,"legendFormat":"challenges"},{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"B","expr":"sum(sn44_images)","instant":true,"legendFormat":"images"}],"fieldConfig":{"defaults":{"unit":"short"},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"value","graphMode":"none","textMode":"value_and_name"}},
+        {"id":6,"type":"stat","title":"Archive restante","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":16,"y":1,"w":4,"h":4},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sn44_backfill_remaining_keys","instant":true}],"fieldConfig":{"defaults":{"unit":"short"},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"value","graphMode":"none","textMode":"value"}},
+        {"id":7,"type":"stat","title":"En attente","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":20,"y":1,"w":4,"h":4},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sn44_pending","instant":true,"legendFormat":"{{kind}}"}],"fieldConfig":{"defaults":{"unit":"short"},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"value","graphMode":"none","textMode":"value_and_name"}},
+        {"id":8,"type":"timeseries","title":"Jeu de données par Element (shards)","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":0,"y":5,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sn44_shards","legendFormat":"{{element}}"}],"fieldConfig":{"defaults":{"unit":"short"},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"right","calcs":["lastNotNull"]}}},
+        {"id":9,"type":"timeseries","title":"Requêtes et erreurs","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":12,"y":5,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sum by (kind) (rate(sn44_collector_requests_total[5m]))","legendFormat":"{{kind}}"},{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"B","expr":"sum by (source) (rate(sn44_collector_errors_total[5m]))","legendFormat":"erreurs {{source}}"}],"fieldConfig":{"defaults":{"unit":"reqps"},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"right","calcs":["lastNotNull"]}}},
+        {"id":10,"type":"row","title":"Compétition","collapsed":false,"gridPos":{"x":0,"y":13,"w":24,"h":1},"panels":[]},
+        {"id":11,"type":"table","title":"Gagnants actuels","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":0,"y":14,"w":12,"h":9},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sn44_winner == 1","instant":true,"format":"table"}],"transformations":[{"id":"organize","options":{"excludeByName":{"Time":true,"Value":true,"__name__":true,"instance":true,"job":true,"projet":true},"renameByName":{"element":"Element","hotkey":"Hotkey"}}}],"options":{"showHeader":true}},
+        {"id":12,"type":"bargauge","title":"Gagnants distincts sur 24 h","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":12,"y":14,"w":12,"h":9},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"count by (element) (max_over_time(sn44_winner[24h]))","instant":true,"legendFormat":"{{element}}"}],"options":{"orientation":"horizontal","displayMode":"basic","reduceOptions":{"calcs":["lastNotNull"]}},"fieldConfig":{"defaults":{"min":0},"overrides":[]}},
+        {"id":13,"type":"timeseries","title":"Score du 1er (avg_score)","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":0,"y":23,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sn44_top_score{rank=\"1\"}","legendFormat":"{{element}}"}],"fieldConfig":{"defaults":{"unit":"short"},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"right","calcs":["lastNotNull"]}}},
+        {"id":14,"type":"timeseries","title":"Écart 1er - 2e","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":12,"y":23,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sn44_top_score{rank=\"1\"} - on(element) sn44_top_score{rank=\"2\"}","legendFormat":"{{element}}"}],"fieldConfig":{"defaults":{"unit":"short"},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"right","calcs":["lastNotNull"]}}},
+        {"id":15,"type":"row","title":"Score","collapsed":false,"gridPos":{"x":0,"y":31,"w":24,"h":1},"panels":[]},
+        {"id":16,"type":"bargauge","title":"Poids du manifest","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":0,"y":32,"w":8,"h":9},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sn44_element_weight","instant":true,"legendFormat":"{{element}} ({{track}})"}],"options":{"orientation":"horizontal","displayMode":"basic","reduceOptions":{"calcs":["lastNotNull"]}},"fieldConfig":{"defaults":{"unit":"percentunit","min":0,"max":0.5},"overrides":[]}},
+        {"id":17,"type":"timeseries","title":"Échecs de conformité","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":8,"y":32,"w":8,"h":9},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sn44_failing_tuples","legendFormat":"{{status}}"}],"fieldConfig":{"defaults":{"unit":"short"},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"right","calcs":["lastNotNull"]}}},
+        {"id":18,"type":"timeseries","title":"Liste noire et mineurs inactifs","datasource":{"type":"prometheus","uid":"prometheus"},"gridPos":{"x":16,"y":32,"w":8,"h":9},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"A","expr":"sn44_blacklist_hotkeys","legendFormat":"liste noire"},{"datasource":{"type":"prometheus","uid":"prometheus"},"refId":"B","expr":"sn44_inactive_miners","legendFormat":"inactifs"}],"fieldConfig":{"defaults":{"unit":"short"},"overrides":[]},"options":{"legend":{"displayMode":"table","placement":"right","calcs":["lastNotNull"]}}}
+      ]}
 
   # Secrets : valeurs dans les variables de la stack Portainer, jamais dans git.
   # Passés par interpolation `${VAR:?}` (`secrets: environment:` ne reçoit pas
