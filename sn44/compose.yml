@@ -16,7 +16,7 @@ name: sn44
 
 services:
   sn44-collector:
-    image: ghcr.io/maksiime/sn44-collector:sha-5bc2d19
+    image: ghcr.io/maksiime/sn44-collector:sha-c23d5b6
     container_name: sn44-collector
     restart: unless-stopped
     environment:
