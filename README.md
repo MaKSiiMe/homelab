@@ -6,7 +6,7 @@ Infrastructure du serveur `s56c-srv` (Debian 13, Docker + Portainer CE), gérée
 |---|---|---|
 | `monitoring/` | `monitoring` | Uptime Kuma, Dozzle, socket-proxy Docker en lecture seule |
 | `metrics/` | `metrics` | Prometheus, Alertmanager, Grafana, node_exporter, cAdvisor, smartctl_exporter |
-| `sn44/` | `sn44` | Collecteur de données du minage Bittensor SN44 (image `ghcr.io/maksiime/sn44-collector`, code dans `MaKSiiMe/sn44-miner`) |
+| `sn44/` | `sn44` | Collecteur de données du minage Bittensor SN44 (image `ghcr.io/maksiime/sn44-collector`, code dans `MaKSiiMe/sn44-miner`) et MLflow (suivi des entraînements) |
 
 Les secrets ne sont jamais dans ce dépôt : ce sont des variables de la stack dans Portainer.
 
@@ -52,3 +52,5 @@ Portainer CE ne monte pas les fichiers du dépôt (chemins relatifs réservés �
 Collecteur 24/7 des données publiques de Score pour le minage du subnet 44 : il n'a ni clé ni secret, ne publie aucun port, et rejoint le réseau `metrics` pour être scrapé (job `sn44`). Ses données (shards, réponses, images, ~80 Mo/jour, ~7 Go de rattrapage initial) sont dans le volume `sn44_data`.
 
 Déployer une nouvelle version du collecteur : changer le tag `sha-…` de l'image dans `sn44/compose.yml` par PR. Les alertes portant `projet="sn44"` partent sur le webhook `SN44_DISCORD_WEBHOOK_URL` (route dédiée dans Alertmanager).
+
+**MLflow** (`sn44-mlflow`) : suivi des entraînements lancés depuis le Legion, sur `http://100.124.153.20:5050` (Tailscale uniquement, sans authentification). Côté client : `MLFLOW_TRACKING_URI=http://100.124.153.20:5050`. Métadonnées (SQLite) et artefacts (~10 Mo par run) dans le volume `sn44_mlflow`. Le job runner de MLflow 3 est désactivé (`MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false`) : il ajoutait ~2,3 Go de RAM pour des fonctions GenAI inutiles ici.
