@@ -13,6 +13,13 @@ name: sn44
 #
 # Volume : ~80 Mo/jour en régime courant, ~7 Go pour le rattrapage initial de
 # l'archive (une seule fois, à 8 requêtes/s, environ 2 jours).
+#
+# MLflow : suivi des entraînements (lancés sur le Legion), sur
+# http://100.124.153.20:5050 (Tailscale uniquement, sans authentification).
+# Métadonnées en SQLite et artefacts (poids, ONNX, ~10 Mo par run) dans le
+# volume sn44_mlflow ; les clients envoient leurs artefacts par HTTP
+# (--serve-artifacts), aucun partage de fichiers. Le port 5000 est pris par
+# Trackmania (XML-RPC sur 127.0.0.1).
 
 services:
   sn44-collector:
@@ -30,8 +37,35 @@ services:
     mem_limit: 768m
     memswap_limit: 768m
 
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.18.0
+    container_name: sn44-mlflow
+    restart: unless-stopped
+    environment:
+      # Le job runner (fonctions GenAI : juges, optimisation de prompts) lance
+      # 8 consommateurs huey à ~280 Mo chacun ; inutile ici. Sans lui : ~590 Mo.
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false"
+    command:
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5050
+      - --workers=1
+      - --backend-store-uri=sqlite:////mlflow/mlflow.db
+      - --artifacts-destination=/mlflow/artifacts
+      - --serve-artifacts
+      # Rejette tout en-tête Host inattendu (protection contre le DNS rebinding).
+      - --allowed-hosts=100.124.153.20:5050,localhost:5050
+    volumes:
+      - sn44_mlflow:/mlflow
+    ports:
+      - "100.124.153.20:5050:5050"
+    mem_limit: 768m
+    memswap_limit: 768m
+
 volumes:
   sn44_data:
+  sn44_mlflow:
 
 networks:
   metrics:
